@@ -1,0 +1,213 @@
+library(nycflights13)
+library(tidyr)
+library(dplyr)
+library(rmarkdown)
+library(Hmisc)
+library(maps)
+library(corrplot)
+#Exploring NYCFlights data 
+#This dataset is about all the flights leaving from NYC (i.e. JFK, LGA or EWR) in 2013.
+
+
+help(package = "nycflights13")
+
+dim(flights)
+
+View(flights)
+
+glimpse(flights)
+
+#Flights are often delayed Performing explorartory Analysis will give some important questions to be answered
+
+#1. what was the Worst day to fly put of NYC in 2013
+
+# For that we need to find out the Total Delay = Avg Arrival Delay + Avg Departure Delay 
+
+#loading the flights data
+flights %>% 
+  select(month, day, arr_delay, dep_delay) %>% 
+  filter(arr_delay >= 0, dep_delay >= 0) %>%
+  group_by(month, day) %>%
+  summarise(avg_delay =  mean(arr_delay, na.rm = TRUE) + 
+              mean(dep_delay, na.rm = TRUE)) %>%
+  ungroup() %>%
+  arrange(-avg_delay)
+
+#So we can see that September 12th is the worst day to fly out from NewYork where averagae delay was around 228 minutes
+
+#Next is we want to know is there any any particular airport where the delay happened 
+
+dataflights = flights %>% 
+  select(origin,month,day,arr_delay,dep_delay) %>% 
+  filter(arr_delay >=0 , dep_delay >=0) %>% 
+  group_by(origin,month,day) %>% 
+  summarise(avg_delay =  mean(arr_delay, na.rm = TRUE) + 
+              mean(dep_delay, na.rm = TRUE)) %>%
+  ungroup() %>%
+  arrange(-avg_delay)
+
+dataflights
+
+#As we can see the Flights originating from LGA at september 2 has the highest delay following by LGA and EWR at spetember 12th
+
+# Next we want to know total delay per Origin and plot it
+
+sumorigin = dataflights %>%
+  group_by(origin) %>% 
+  summarise(TotalDelay=sum(avg_delay)) %>% 
+  ungroup() %>% 
+  arrange(-TotalDelay)
+sumorigin
+
+#We can see the the maximum flights originited from EWR are delayed
+
+#Next we are going to create a variable speed for the carriers 
+SpeedDta=flights %>% 
+  mutate(speed = distance/air_time * 60) %>% 
+  group_by(carrier) %>% 
+  summarise(AvgSpeed = mean(speed,na.rm = T)) %>% 
+  ungroup() %>% 
+  arrange(-AvgSpeed)
+SpeedDta  
+
+## So we can see  the fastest carrier is HA 
+
+## next we want to know is there any seasonal patterns for the delay
+
+#Creating the 'date' variable by passing the entire data object inside a 'with'
+#function. The 'ISOdate' function merges the 'month' & 'day' column along with
+#year = 2013 to make a complete date column. We save this entire column in the 
+#'data' object.
+dataflights$date <- with(dataflights, ISOdate(year = 2013, month, day))
+
+#Creating a ggplot function with x-axis = Date and y-axis = Average delay
+ggplot(dataflights, aes(x = dataflights$date, y = dataflights$avg_delay, title = "Seasonality Trends")) + geom_point(aes(color = dataflights$origin))+ xlab("Date") + ylab("Average Delay (mins)") + geom_smooth(color = "Black")
+
+#This shows us that there is a PEAK in delays during June, July & August month and the delays generally fall down during the winter months October, November, December & January
+
+#On a day we want to know which particular time the delay occur in general ,we will need to have a plot the average delays per hour in all days across 2013. This will give us an hourly trend (if any) in the data.
+
+arr_delay_data <- flights %>%
+  select(arr_delay, dep_delay, hour)  
+#arr_delay_data[arr_delay_data$hour==24,]
+#Making sure that 24:00 hrs is 00:00 hrs. Replacing all instances of 2400 hrs 
+#as 0000hrs. This will help us in making sure we have only 24 hours
+#when we round off the hours to the nearest hour interval
+arr_delay_data$hour <- ifelse(arr_delay_data$hour == 2400, 0, arr_delay_data$hour)
+
+#to get a summarized dataset with average arrival delay for each hour.
+arr_delay <- arr_delay_data %>%
+  filter(arr_delay >= 0, dep_delay >= 0) %>%
+  select(hour, arr_delay, dep_delay) %>%
+  group_by(hour) %>%
+  summarise(avg_delay = mean(arr_delay, na.rm = TRUE) +
+              mean(dep_delay, na.rm = TRUE)) %>%
+  na.omit()
+arr_delay
+ggplot(arr_delay,aes(x = as.numeric(hour),y = avg_delay),title = "Daily Hourly") + geom_point(color = "Black") + geom_smooth() + xlab("Hour") + ylab("Average Delay")
+
+## we can see that the flights starting around 15 - 20 have the maximum delays 
+
+# Flights are often delayed due to weather condition so our next analysis will be on how weather affects the NYC flights
+
+flights = flights
+weather = weather
+
+#creating 'hours' column and making sure that hours are only from
+#00:00 hrs to 23:00 hrs which is exactly as the 'weather' data set has.
+#this will help us join the 2 data sets properly.
+flights$hour <- ifelse(flights$hour == 24, 0, flights$hour)
+
+#JOining the 'flights' and 'weather' datasets based on unique identifiers.
+flights_weather <- left_join(flights, weather)
+
+#We create a 'delays' column that is addition of all the delays in
+#arrival and departure (Consider only positive delays. Reason stated in
+#1st problem solution)
+flights_weather$arr_delay = ifelse(flights_weather$arr_delay >= 0,
+                                    flights_weather$arr_delay, 0)
+flights_weather$dep_delay = ifelse(flights_weather$dep_delay >= 0,
+                                    flights_weather$dep_delay, 0)
+flights_weather$total_delay = flights_weather$arr_delay + flights_weather$dep_delay
+
+
+#creating a data with only delay and weather columns. Removing origin, date/time
+#because we want a correlation between delay and the particular weather condition.
+cor_data = select(flights_weather, total_delay, temp, dewp, humid,
+                   wind_dir, wind_speed, wind_gust, precip, pressure, visib)
+
+#WE first plot a correlation Matrix using corrplot to find the variables that
+#are correlated. We create a correlation matrix using 'cor' function
+corrplot(cor(na.omit(cor_data)), method = "circle", type = "upper",
+         tl.srt = 25, tl.col = "Black", tl.cex = 1, title = "Correlation
+         between all 'weather' variables & 'delay'", mar =c(0, 0, 4, 0) + 0.1)
+## So from the corrplot we can see there are delay is dependent on all the weather variable
+ggplot(cor_data, aes(y = humid, x = total_delay, title = "Total Delay v/s Relative Humidity")) + geom_smooth() + ylab("Relative Humidity") + xlab("Total Delay (mins)")
+
+# we can see that the total delay increases with the increase of humididty
+
+ggplot(cor_data, aes(y = temp, x = total_delay, title = "Total Delay v/s Temperature")) + geom_smooth() + ylab("Temperature") + xlab("Total Delay (mins)")
+
+# We can see there is not much change in delay with temparature and delay 
+ggplot(cor_data, aes(y = visib, x = total_delay, title = "Total Delay v/s Visibility")) + geom_smooth() + ylab("Temperature") + xlab("Total Delay (mins)")
+
+## we can see that as the visibilty decreases Delay also increases 
+
+#impacted by the aircraft used. Do aircrafts with certain characteristics (e.g. manufacturer) 
+#demonstrate better performance
+#We will create a variable name PI which will define the performance index with below 
+#Flight Perfomance = (Arival Delay + Departure Delay)/Air Time
+# We will create another variable called age which will be defined by the formula 
+#Age of plane = 2013(Flight year) - Year Manufactured
+
+#Merging the datasets 'flights' and 'planes' based on a unique idetifiers.
+flight_planes = left_join(flights, planes, by = 'tailnum')
+
+names(flight_planes)[1] = "year"
+names(flight_planes)[20] = "year_manufacture"
+
+#Calulcating the Performance Index [pi] 
+flight_planes$pi = (flight_planes$dep_delay + flight_planes$arr_delay)/ flight_planes$air_time
+
+#We also calculate the 'age' of the aircraft as a variable
+flight_planes$age = flight_planes$year - flight_planes$year_manufacture
+
+#We group all the performance parameters for each aircraft using their tailnum
+#This will give us an average performance index of that aircraft for the year 2013
+aircraft = flight_planes %>%
+  
+  #we group by the tailnum
+  group_by(tailnum) %>%
+  
+  #we find the mean of the Performance index
+  summarise(avg_pi = mean(pi, na.rm = TRUE)) 
+aircraft
+
+#we will now add the planes dataset to our aggregated aircraft data
+air_details = left_join(aircraft, planes)
+air_details
+#plotting to find any correlation
+cor(na.omit(air_details[,unlist(lapply(air_details, is.numeric))]))
+d = air_details %>%
+  select(seats, avg_pi) %>%
+  group_by(seats) %>%
+  summarise(pi = mean(avg_pi, na.rm = TRUE))
+#Plot to find the PI with the seats
+ggplot(d, aes(x = seats, y = pi, title = "PI v/s seats")) + geom_point() + geom_smooth(method = 'lm') + xlab("Seats") + ylab("Performance Index (Lower is better)")
+
+## As we can see the the number of seats increases decreases the average performance index
+
+## Next we want to know the performance index per manufactuer
+
+d = air_details %>%
+  select(manufacturer, avg_pi) %>%
+  group_by(manufacturer) %>%
+  summarise(pi = mean(avg_pi, na.rm = TRUE)) %>%
+  na.omit()
+ggplot(d, aes(x = factor(manufacturer) , y = pi, title = "PI v/s Manufacturers")) + 
+  geom_bar(stat = "identity") + xlab("Perfomance Index (Lower is better)") +
+  ylab("Manufacturers") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+## with this we can easily find which manufacturer has good perfromance index 
+
